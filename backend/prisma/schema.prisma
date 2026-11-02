@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  DOCTOR
+  ADMIN
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AppointmentStatus {
+  BOOKED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  REMINDER_24H
+  REMINDER_1H
+  REMINDER_15M
+  RESCHEDULE_CONFIRMATION
+  CONSULTATION_COMPLETED
+  APPROVAL_UPDATE
+  SYSTEM
+}
+
+enum JobType {
+  BOOKING_CONFIRMATION
+  REMINDER_24H
+  REMINDER_1H
+  REMINDER_15M
+  RESCHEDULE_CONFIRMATION
+  COMPLETION_NOTIFICATION
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id                   Int                  @id @default(autoincrement())
+  email                String               @unique
+  passwordHash         String
+  role                 Role                 @default(USER)
+  username             String
+  phone                String?
+  isActive             Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  doctorProfile        Doctor?
+  patientAppointments  Appointment[]        @relation("PatientAppointments")
+  patientPrescriptions Prescription[]       @relation("PatientPrescriptions")
+  notifications        Notification[]
+  appointmentHistories AppointmentHistory[]
+
+  @@map("users")
+}
+
+model Doctor {
+  id               Int                 @id @default(autoincrement())
+  userId           Int                 @unique
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialization   String
+  qualifications   String
+  medicalRegNumber String              @unique
+  experienceYears  Int
+  consultationFee  Decimal             @db.Decimal(10, 2)
+  bio              String?             @db.Text
+  avatarUrl        String?
+  approvalStatus   ApprovalStatus      @default(PENDING)
+  rejectionReason  String?             @db.Text
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  documents         DoctorDocument[]
+  availabilitySlots AvailabilitySlot[]
+  appointments      Appointment[]
+  prescriptions     Prescription[]
+
+  @@map("doctors")
+}
+
+model DoctorDocument {
+  id           Int      @id @default(autoincrement())
+  doctorId     Int
+  doctor       Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  originalName String
+  fileKey      String
+  filePath     String
+  mimeType     String
+  fileSize     Int
+  documentType String   @default("CERTIFICATE")
+  createdAt    DateTime @default(now())
+
+  @@map("doctor_documents")
+}
+
+model AvailabilitySlot {
+  id              Int          @id @default(autoincrement())
+  doctorId        Int
+  doctor          Doctor       @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  date            DateTime     @db.Date
+  startTime       String       @db.VarChar(10)
+  endTime         String       @db.VarChar(10)
+  startTimestamp  DateTime
+  endTimestamp    DateTime
+  durationMinutes Int          @default(30)
+  isBooked        Boolean      @default(false)
+  isCancelled     Boolean      @default(false)
+  appointment     Appointment?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([doctorId, date, startTime])
+  @@index([doctorId, date])
+  @@index([isBooked, isCancelled])
+  @@map("availability_slots")
+}
+
+model Appointment {
+  id                 Int                @id @default(autoincrement())
+  appointmentNumber  String             @unique
+  patientId          Int
+  patient            User               @relation("PatientAppointments", fields: [patientId], references: [id])
+  doctorId           Int
+  doctor             Doctor             @relation(fields: [doctorId], references: [id])
+  slotId             Int                @unique
+  slot               AvailabilitySlot   @relation(fields: [slotId], references: [id])
+  scheduledDate      DateTime           @db.Date
+  startTime          String             @db.VarChar(10)
+  endTime            String             @db.VarChar(10)
+  scheduledTimestamp DateTime
+  status             AppointmentStatus  @default(BOOKED)
+
+  doctorFee          Decimal            @db.Decimal(10, 2)
+  commissionType     CommissionType     @default(PERCENTAGE)
+  commissionRate     Decimal            @db.Decimal(10, 2)
+  commissionAmount   Decimal            @db.Decimal(10, 2)
+  totalAmount        Decimal            @db.Decimal(10, 2)
+
+  notes              String?            @db.Text
+  cancellationReason String?            @db.Text
+  cancelledAt        DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  history            AppointmentHistory[]
+  prescription       Prescription?
+  notificationJobs   NotificationJob[]
+  notifications      Notification[]
+
+  @@index([patientId, status])
+  @@index([doctorId, status])
+  @@index([scheduledTimestamp])
+  @@map("appointments")
+}
+
+model AppointmentHistory {
+  id              Int                @id @default(autoincrement())
+  appointmentId   Int
+  appointment     Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  previousStatus  AppointmentStatus?
+  newStatus       AppointmentStatus
+  changeReason    String?            @db.Text
+  changedByUserId Int?
+  changedByUser   User?              @relation(fields: [changedByUserId], references: [id])
+  createdAt       DateTime           @default(now())
+
+  @@map("appointment_history")
+}
+
+model Prescription {
+  id            Int                @id @default(autoincrement())
+  appointmentId Int                @unique
+  appointment   Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patientId     Int
+  patient       User               @relation("PatientPrescriptions", fields: [patientId], references: [id])
+  doctorId      Int
+  doctor        Doctor             @relation(fields: [doctorId], references: [id])
+  diagnosis     String             @db.Text
+  clinicalNotes String?            @db.Text
+  followUpDate  DateTime?          @db.Date
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  items         PrescriptionItem[]
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@map("prescriptions")
+}
+
+model PrescriptionItem {
+  id             Int          @id @default(autoincrement())
+  prescriptionId Int
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medicineName   String
+  dosage         String
+  frequency      String
+  duration       String
+  instructions   String?      @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@map("prescription_items")
+}
+
+model Notification {
+  id            Int              @id @default(autoincrement())
+  userId        Int
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentId Int?
+  appointment   Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  title         String
+  message       String           @db.Text
+  type          NotificationType
+  isRead        Boolean          @default(false)
+  readAt        DateTime?
+  createdAt     DateTime         @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model NotificationJob {
+  id            Int         @id @default(autoincrement())
+  appointmentId Int
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  userId        Int
+  type          JobType
+  scheduledFor  DateTime
+  status        JobStatus   @default(PENDING)
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(3)
+  lastError     String?     @db.Text
+  executedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([appointmentId])
+  @@map("notification_jobs")
+}
+
+model AppSetting {
+  id                      Int            @id @default(1)
+  appName                 String         @default("DocCare Connect")
+  logoUrl                 String?
+  commissionType          CommissionType @default(PERCENTAGE)
+  commissionValue         Decimal        @default(10.00) @db.Decimal(10, 2)
+  currency                String         @default("INR")
+  currencySymbol          String         @default("₹")
+  supportEmail            String         @default("support@doccare.com")
+  cancellationCutoffHours Int            @default(24)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  @@map("app_settings")
+}
